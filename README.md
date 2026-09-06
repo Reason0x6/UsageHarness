@@ -24,7 +24,7 @@ make test
 make run
 ```
 
-`make app` creates `.build/UsageHarness.app` and applies an ad-hoc signature. You can also open `Package.swift` directly in Xcode and run the `UsageHarness` executable scheme.
+`make app` compiles the sources directly with the active Apple command-line toolchain, creates `.build/UsageHarness.app`, and applies an ad-hoc signature. It intentionally does not rely on SwiftPM for the app bundle, so it also works around mismatched `PackageDescription` installations. You can alternatively open `Package.swift` directly in Xcode and run the `UsageHarness` executable scheme.
 
 For reliable launch-at-login registration, move the built app to `/Applications` and launch it from there once before enabling the setting.
 
