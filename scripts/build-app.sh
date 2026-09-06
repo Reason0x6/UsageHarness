@@ -26,7 +26,7 @@ SOURCE_FILES=("$PROJECT_ROOT"/Sources/UsageHarness/*.swift)
 
 mkdir -p "$BUILD_DIR"
 
-echo "Building Usage Harness for $ARCH…"
+echo "Building Usage Harness for ${ARCH}..."
 xcrun --sdk macosx swiftc \
     -sdk "$SDK_PATH" \
     -target "${ARCH}-apple-macosx13.0" \
