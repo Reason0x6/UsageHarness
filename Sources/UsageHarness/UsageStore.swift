@@ -30,7 +30,7 @@ final class UsageStore: ObservableObject {
     }
 
     var visibleUsages: [HarnessUsage] {
-        preferences.value.showUnavailableHarnesses ? usages : usages.filter(\.isInstalled)
+        usages
     }
 
     func start() {

@@ -14,7 +14,7 @@ struct UsageHarnessApp: App {
                 Button("About Usage Harness") {
                     NSApp.orderFrontStandardAboutPanel(options: [
                         .applicationName: "Usage Harness",
-                        .applicationVersion: "0.1.0"
+                        .applicationVersion: "0.2.0"
                     ])
                 }
             }

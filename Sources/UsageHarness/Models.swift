@@ -43,42 +43,15 @@ struct DisplayChoice: Identifiable, Hashable {
 }
 
 enum HarnessKind: String, CaseIterable, Codable, Identifiable {
-    case codex, claude, copilot, gemini, opencode, aider
+    case claude
 
     var id: String { rawValue }
 
-    var displayName: String {
-        switch self {
-        case .codex: "Codex"
-        case .claude: "Claude"
-        case .copilot: "Copilot"
-        case .gemini: "Gemini CLI"
-        case .opencode: "OpenCode"
-        case .aider: "Aider"
-        }
-    }
+    var displayName: String { "Claude" }
 
-    var shortMark: String {
-        switch self {
-        case .codex: "⌘"
-        case .claude: "✳"
-        case .copilot: "<>"
-        case .gemini: "✦"
-        case .opencode: "OC"
-        case .aider: "A"
-        }
-    }
+    var shortMark: String { "✳" }
 
-    var tint: Color {
-        switch self {
-        case .codex: Color(red: 0.15, green: 0.90, blue: 0.66)
-        case .claude: Color(red: 1.00, green: 0.34, blue: 0.11)
-        case .copilot: Color(red: 0.82, green: 0.98, blue: 0.12)
-        case .gemini: Color(red: 0.33, green: 0.58, blue: 1.00)
-        case .opencode: Color(red: 0.75, green: 0.50, blue: 1.00)
-        case .aider: Color(red: 1.00, green: 0.62, blue: 0.24)
-        }
-    }
+    var tint: Color { Color(red: 1.00, green: 0.34, blue: 0.11) }
 }
 
 struct UsageMetric: Identifiable, Equatable {
@@ -113,7 +86,6 @@ struct AppPreferences: Codable, Equatable {
     var displayID: UInt32?
     var edge: ScreenEdge = .right
     var refreshInterval: TimeInterval = 60
-    var showUnavailableHarnesses = false
     var panelVisible = true
 
     static let `default` = AppPreferences()

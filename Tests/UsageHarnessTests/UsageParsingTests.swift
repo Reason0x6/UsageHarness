@@ -1,34 +1,39 @@
+import Foundation
 import XCTest
 @testable import UsageHarness
 
 final class UsageParsingTests: XCTestCase {
-    func testCodexRateLimits() {
-        let input = #"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":12000},"model_context_window":200000},"rate_limits":{"primary":{"used_percent":73,"window_minutes":300,"resets_at":2000000000},"secondary":{"used_percent":7,"window_minutes":10080}}}}"#
-        let result = CodexUsageParser.parse(input)
+    func testClaudeQuotaWindows() throws {
+        let input = #"{"five_hour":{"utilization":73.5,"resets_at":"2026-09-07T12:00:00.000Z"},"seven_day":{"utilization":21,"resets_at":"2026-09-10T00:00:00Z"}}"#
+        let result = try XCTUnwrap(ClaudeQuotaParser.parse(Data(input.utf8)))
 
-        XCTAssertEqual(result.metrics.count, 2)
-        XCTAssertEqual(result.metrics[0].fractionUsed, 0.73)
-        XCTAssertEqual(result.metrics[0].title, "5-hour window")
-        XCTAssertEqual(result.metrics[1].title, "7-day window")
+        XCTAssertEqual(result.fiveHour?.utilization, 73.5)
+        XCTAssertEqual(result.sevenDay?.utilization, 21)
+        XCTAssertNotNil(result.fiveHour?.resetsAt)
     }
 
-    func testCodexFallsBackToContext() {
-        let input = #"{"payload":{"info":{"total_token_usage":{"total_tokens":50000},"model_context_window":200000}}}"#
-        let result = CodexUsageParser.parse(input)
+    func testClaudeCachedLimitShape() throws {
+        let input = #"{"cachedUsageUtilization":{"limits":[{"kind":"session","percent":18,"resets_at":"2026-09-07T12:00:00Z"},{"kind":"weekly_all","percent":42,"resets_at":"2026-09-10T00:00:00Z"}]}}"#
+        let result = try XCTUnwrap(ClaudeQuotaParser.parse(Data(input.utf8)))
 
-        XCTAssertEqual(result.metrics.count, 1)
-        XCTAssertEqual(result.metrics[0].fractionUsed, 0.25)
+        XCTAssertEqual(result.fiveHour?.utilization, 18)
+        XCTAssertEqual(result.sevenDay?.utilization, 42)
     }
 
-    func testClaudeUsesLatestContextAndTotalsOutput() {
+    func testClaudeDeduplicatesStreamingMessageRecords() {
         let input = """
-        {"message":{"usage":{"input_tokens":1000,"cache_read_input_tokens":2000,"output_tokens":500}}}
-        {"message":{"usage":{"input_tokens":2000,"cache_read_input_tokens":3000,"cache_creation_input_tokens":1000,"output_tokens":1000}}}
+        {"message":{"id":"msg-1","usage":{"input_tokens":1000,"cache_read_input_tokens":2000,"output_tokens":500}}}
+        {"message":{"id":"msg-1","usage":{"input_tokens":1000,"cache_read_input_tokens":2000,"output_tokens":1000}}}
+        {"message":{"id":"msg-2","usage":{"input_tokens":2000,"cache_read_input_tokens":3000,"cache_creation_input_tokens":1000,"output_tokens":1000}}}
         """
         let result = ClaudeUsageParser.parse(input)
 
-        XCTAssertEqual(result.tokens, 7000)
-        XCTAssertEqual(result.metrics[0].fractionUsed, 0.035)
-        XCTAssertEqual(result.metrics[1].valueText, "1.5K tokens")
+        XCTAssertEqual(result.totalTokens, 11_000)
+        XCTAssertEqual(result.currentContextTokens, 7_000)
+    }
+
+    func testClaudeCredentialParsing() {
+        let input = #"{"claudeAiOauth":{"accessToken":"test-token","refreshToken":"not-used"}}"#
+        XCTAssertEqual(ClaudeCredentialParser.accessToken(from: Data(input.utf8)), "test-token")
     }
 }

@@ -3,115 +3,153 @@ import Foundation
 actor UsageScanner {
     private let fileManager = FileManager.default
     private let home = FileManager.default.homeDirectoryForCurrentUser
+    private var cachedAccessToken: String?
+    private var lastCredentialAttempt: Date?
 
-    func scan() -> [HarnessUsage] {
-        [
-            scanCodex(),
-            scanClaude(),
-            scanCopilot(),
-            scanPresence(.gemini, executables: ["gemini"], directories: [".gemini"]),
-            scanPresence(.opencode, executables: ["opencode"], directories: [".config/opencode", ".local/share/opencode"]),
-            scanPresence(.aider, executables: ["aider"], directories: [".aider"])
-        ]
+    func scan() async -> [HarnessUsage] {
+        [await scanClaude()]
     }
 
-    private func scanCodex() -> HarnessUsage {
-        let root = home.appendingPathComponent(".codex", isDirectory: true)
-        let installed = executableExists(names: ["codex"]) || fileManager.fileExists(atPath: root.path)
-        guard installed else { return unavailable(.codex) }
-
-        guard let latest = newestJSONL(in: root.appendingPathComponent("sessions", isDirectory: true)),
-              let text = JSONHelpers.tail(of: latest) else {
-            return HarnessUsage(kind: .codex, isInstalled: true, metrics: [], status: "Installed · waiting for session data", updatedAt: Date())
-        }
-
-        let parsed = CodexUsageParser.parse(text)
-        return HarnessUsage(
-            kind: .codex,
-            isInstalled: true,
-            metrics: parsed.metrics,
-            status: parsed.metrics.isEmpty ? "Installed · no usage counters found" : "Live local session data",
-            updatedAt: Date()
-        )
-    }
-
-    private func scanClaude() -> HarnessUsage {
+    private func scanClaude() async -> HarnessUsage {
         let root = home.appendingPathComponent(".claude", isDirectory: true)
-        let installed = executableExists(names: ["claude"]) || fileManager.fileExists(atPath: root.path)
-        guard installed else { return unavailable(.claude) }
+        let installed = executableExists(name: "claude") || fileManager.fileExists(atPath: root.path)
 
-        guard let latest = newestJSONL(in: root.appendingPathComponent("projects", isDirectory: true)),
-              let text = JSONHelpers.tail(of: latest) else {
-            return HarnessUsage(kind: .claude, isInstalled: true, metrics: [], status: "Installed · waiting for session data", updatedAt: Date())
+        async let quotaResult = fetchQuota()
+        let session = newestJSONL(in: root.appendingPathComponent("projects", isDirectory: true))
+            .flatMap { JSONHelpers.contents(of: $0) }
+            .map(ClaudeUsageParser.parse)
+        let quota = await quotaResult
+        let available = installed || quota != nil || session != nil
+
+        let metrics = quotaMetrics(quota) + [sessionMetric(session)]
+        let status: String
+        if quota != nil, session != nil {
+            status = "Account limits + local session"
+        } else if quota != nil {
+            status = "Account limits available · no local session"
+        } else if session != nil {
+            status = "Local session · account limits unavailable"
+        } else if available {
+            status = "Claude detected · waiting for usage data"
+        } else {
+            status = "Claude Code not detected"
         }
 
-        let parsed = ClaudeUsageParser.parse(text)
         return HarnessUsage(
             kind: .claude,
-            isInstalled: true,
-            metrics: parsed.metrics,
-            status: parsed.metrics.isEmpty ? "Installed · no token data found" : "Context estimate from local session",
+            isInstalled: available,
+            metrics: metrics,
+            status: status,
             updatedAt: Date()
         )
     }
 
-    private func scanCopilot() -> HarnessUsage {
-        let configLocations = [
-            home.appendingPathComponent(".config/github-copilot", isDirectory: true),
-            home.appendingPathComponent(".config/gh-copilot", isDirectory: true),
-            home.appendingPathComponent(".local/share/gh/extensions/gh-copilot", isDirectory: true)
+    private func quotaMetrics(_ quota: ClaudeQuotaSnapshot?) -> [UsageMetric] {
+        [
+            quotaMetric(id: "claude-five-hour", title: "5-hour window", window: quota?.fiveHour),
+            quotaMetric(id: "claude-weekly", title: "Weekly window", window: quota?.sevenDay)
         ]
-        let installed = executableExists(names: ["github-copilot-cli", "copilot", "gh-copilot"]) ||
-            configLocations.contains(where: { fileManager.fileExists(atPath: $0.path) }) ||
-            editorExtensionExists(prefix: "github.copilot-")
-        guard installed else { return unavailable(.copilot) }
+    }
 
-        let metric = UsageMetric(
-            id: "availability",
-            title: "Local CLI",
+    private func quotaMetric(id: String, title: String, window: ClaudeQuotaWindow?) -> UsageMetric {
+        guard let window else {
+            return UsageMetric(id: id, title: title, fractionUsed: nil, valueText: "Unavailable")
+        }
+        let fraction = window.utilization / 100
+        return UsageMetric(
+            id: id,
+            title: title,
+            fractionUsed: fraction,
+            valueText: Formatters.percent(fraction),
+            resetText: Formatters.resetText(epochSeconds: window.resetsAt?.timeIntervalSince1970, afterSeconds: nil)
+        )
+    }
+
+    private func sessionMetric(_ session: ClaudeSessionUsage?) -> UsageMetric {
+        guard let session else {
+            return UsageMetric(
+                id: "claude-session",
+                title: "Session usage",
+                fractionUsed: nil,
+                valueText: "No recent session"
+            )
+        }
+        return UsageMetric(
+            id: "claude-session",
+            title: "Session usage",
             fractionUsed: nil,
-            valueText: "Ready"
-        )
-        return HarnessUsage(
-            kind: .copilot,
-            isInstalled: true,
-            metrics: [metric],
-            status: "Installed · quota is not exposed locally",
-            updatedAt: Date()
+            valueText: "\(Formatters.compactTokens(session.totalTokens)) total · \(Formatters.compactTokens(session.currentContextTokens)) context"
         )
     }
 
-    private func unavailable(_ kind: HarnessKind) -> HarnessUsage {
-        HarnessUsage(kind: kind, isInstalled: false, metrics: [], status: "Not detected", updatedAt: Date())
-    }
+    private func fetchQuota() async -> ClaudeQuotaSnapshot? {
+        guard let url = URL(string: "https://api.anthropic.com/api/oauth/usage") else { return cachedQuota() }
+        guard let token = accessToken() else { return cachedQuota() }
 
-    private func scanPresence(_ kind: HarnessKind, executables: [String], directories: [String]) -> HarnessUsage {
-        let installed = executableExists(names: executables) || directories.contains {
-            fileManager.fileExists(atPath: home.appendingPathComponent($0, isDirectory: true).path)
-        }
-        guard installed else { return unavailable(kind) }
-        return HarnessUsage(
-            kind: kind,
-            isInstalled: true,
-            metrics: [UsageMetric(id: "availability", title: "Local CLI", fractionUsed: nil, valueText: "Ready")],
-            status: "Installed · quota is not exposed locally",
-            updatedAt: Date()
-        )
-    }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        request.setValue("UsageHarness/0.2", forHTTPHeaderField: "User-Agent")
 
-    private func editorExtensionExists(prefix: String) -> Bool {
-        let roots = [
-            home.appendingPathComponent(".vscode/extensions", isDirectory: true),
-            home.appendingPathComponent(".vscode-insiders/extensions", isDirectory: true),
-            home.appendingPathComponent(".cursor/extensions", isDirectory: true)
-        ]
-        return roots.contains { root in
-            guard let entries = try? fileManager.contentsOfDirectory(atPath: root.path) else { return false }
-            return entries.contains(where: { $0.hasPrefix(prefix) })
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, http.statusCode == 200,
+               let parsed = ClaudeQuotaParser.parse(data) {
+                return parsed
+            }
+            if (response as? HTTPURLResponse)?.statusCode == 401 {
+                cachedAccessToken = nil
+                lastCredentialAttempt = Date()
+            }
+            return cachedQuota()
+        } catch {
+            return cachedQuota()
         }
     }
 
-    private func executableExists(names: [String]) -> Bool {
+    private func cachedQuota() -> ClaudeQuotaSnapshot? {
+        let stateURL = home.appendingPathComponent(".claude.json")
+        guard let data = try? Data(contentsOf: stateURL) else { return nil }
+        return ClaudeQuotaParser.parse(data)
+    }
+
+    private func accessToken() -> String? {
+        if let cachedAccessToken { return cachedAccessToken }
+        if let lastCredentialAttempt, Date().timeIntervalSince(lastCredentialAttempt) < 900 { return nil }
+        lastCredentialAttempt = Date()
+
+        let credentialsURL = home.appendingPathComponent(".claude/.credentials.json")
+        if let data = try? Data(contentsOf: credentialsURL),
+           let token = ClaudeCredentialParser.accessToken(from: data) {
+            cachedAccessToken = token
+            return token
+        }
+
+        guard let data = keychainCredentials(),
+              let token = ClaudeCredentialParser.accessToken(from: data) else { return nil }
+        cachedAccessToken = token
+        return token
+    }
+
+    private func keychainCredentials() -> Data? {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
+            return output.fileHandleForReading.readDataToEndOfFile()
+        } catch {
+            return nil
+        }
+    }
+
+    private func executableExists(name: String) -> Bool {
         let environmentPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
         var paths = environmentPath.split(separator: ":").map(String.init) + [
             "/opt/homebrew/bin",
@@ -123,14 +161,13 @@ actor UsageScanner {
             home.appendingPathComponent(".asdf/shims").path,
             home.appendingPathComponent(".local/share/mise/shims").path
         ]
-        let nvmVersions = home.appendingPathComponent(".nvm/versions/node", isDirectory: true)
-        if let versions = try? fileManager.contentsOfDirectory(atPath: nvmVersions.path) {
-            paths.append(contentsOf: versions.map { nvmVersions.appendingPathComponent($0).appendingPathComponent("bin").path })
+
+        let nvmRoot = home.appendingPathComponent(".nvm/versions/node", isDirectory: true)
+        if let versions = try? fileManager.contentsOfDirectory(at: nvmRoot, includingPropertiesForKeys: nil) {
+            paths.append(contentsOf: versions.map { $0.appendingPathComponent("bin").path })
         }
-        return names.contains { name in
-            paths.contains { directory in
-                fileManager.isExecutableFile(atPath: URL(fileURLWithPath: directory).appendingPathComponent(name).path)
-            }
+        return paths.contains {
+            fileManager.isExecutableFile(atPath: URL(fileURLWithPath: $0).appendingPathComponent(name).path)
         }
     }
 
@@ -143,6 +180,7 @@ actor UsageScanner {
 
         var newest: (url: URL, date: Date)?
         for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            guard !url.pathComponents.contains("subagents") else { continue }
             guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
                   values.isRegularFile == true else { continue }
             let date = values.contentModificationDate ?? .distantPast
@@ -152,109 +190,123 @@ actor UsageScanner {
     }
 }
 
-enum CodexUsageParser {
-    static func parse(_ text: String) -> (metrics: [UsageMetric], contextTokens: Int?) {
-        var rateLimits: [String: Any]?
-        var tokenInfo: [String: Any]?
+struct ClaudeQuotaWindow: Equatable {
+    let utilization: Double
+    let resetsAt: Date?
+}
 
-        for line in text.split(separator: "\n").reversed() {
-            guard let root = JSONHelpers.dictionary(from: line),
-                  let payload = root["payload"] as? [String: Any] else { continue }
-            if rateLimits == nil { rateLimits = payload["rate_limits"] as? [String: Any] }
-            if tokenInfo == nil { tokenInfo = payload["info"] as? [String: Any] }
-            if rateLimits != nil && tokenInfo != nil { break }
-        }
+struct ClaudeQuotaSnapshot: Equatable {
+    let fiveHour: ClaudeQuotaWindow?
+    let sevenDay: ClaudeQuotaWindow?
+}
 
-        var metrics: [UsageMetric] = []
-        if let primary = rateLimits?["primary"] as? [String: Any],
-           let used = number(primary["used_percent"]) {
-            metrics.append(rateMetric(id: "codex-primary", title: windowTitle(primary, fallback: "Current window"), usedPercent: used, data: primary))
-        }
-        if let secondary = rateLimits?["secondary"] as? [String: Any],
-           let used = number(secondary["used_percent"]) {
-            metrics.append(rateMetric(id: "codex-secondary", title: windowTitle(secondary, fallback: "Long window"), usedPercent: used, data: secondary))
-        }
+enum ClaudeQuotaParser {
+    static func parse(_ data: Data) -> ClaudeQuotaSnapshot? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let payload = root["cachedUsageUtilization"] as? [String: Any] ?? root
+        var fiveHour = window(payload["five_hour"])
+        var sevenDay = window(payload["seven_day"])
 
-        let total = JSONHelpers.int(tokenInfo, keys: "total_token_usage", "total_tokens")
-        let contextLimit = JSONHelpers.int(tokenInfo, keys: "model_context_window")
-        if metrics.isEmpty, let total, let contextLimit, contextLimit > 0 {
-            let fraction = Double(total) / Double(contextLimit)
-            metrics.append(UsageMetric(
-                id: "codex-context",
-                title: "Session context",
-                fractionUsed: fraction,
-                valueText: "\(Formatters.compactTokens(total)) / \(Formatters.compactTokens(contextLimit))"
-            ))
+        if let limits = payload["limits"] as? [[String: Any]] {
+            for limit in limits {
+                let kind = limit["kind"] as? String
+                let group = limit["group"] as? String
+                if fiveHour == nil, (kind == "session" || kind == "five_hour" || group == "session") {
+                    fiveHour = window(limit)
+                }
+                if sevenDay == nil, (kind == "weekly_all" || kind == "seven_day") {
+                    sevenDay = window(limit)
+                }
+            }
         }
-        return (metrics, total)
+        guard fiveHour != nil || sevenDay != nil else { return nil }
+        return ClaudeQuotaSnapshot(fiveHour: fiveHour, sevenDay: sevenDay)
     }
 
-    private static func rateMetric(id: String, title: String, usedPercent: Double, data: [String: Any]) -> UsageMetric {
-        let fraction = usedPercent / 100
-        return UsageMetric(
-            id: id,
-            title: title,
-            fractionUsed: fraction,
-            valueText: Formatters.percent(fraction),
-            resetText: Formatters.resetText(
-                epochSeconds: number(data["resets_at"]),
-                afterSeconds: number(data["reset_after_seconds"])
-            )
-        )
-    }
-
-    private static func windowTitle(_ data: [String: Any], fallback: String) -> String {
-        guard let minutes = number(data["window_minutes"]) else { return fallback }
-        if minutes >= 1_440, minutes.truncatingRemainder(dividingBy: 1_440) == 0 {
-            return "\(Int(minutes / 1_440))-day window"
+    private static func window(_ value: Any?) -> ClaudeQuotaWindow? {
+        guard let value = value as? [String: Any] else { return nil }
+        let utilization = number(value["utilization"])
+            ?? number(value["used_percentage"])
+            ?? number(value["percent"])
+        guard let utilization else { return nil }
+        let resetValue = value["resets_at"] ?? value["resetsAt"]
+        let resetsAt: Date?
+        if let string = resetValue as? String {
+            resetsAt = parseDate(string)
+        } else if let epoch = number(resetValue) {
+            resetsAt = Date(timeIntervalSince1970: epoch)
+        } else {
+            resetsAt = nil
         }
-        if minutes >= 60, minutes.truncatingRemainder(dividingBy: 60) == 0 {
-            return "\(Int(minutes / 60))-hour window"
-        }
-        return "\(Int(minutes))-minute window"
+        return ClaudeQuotaWindow(utilization: utilization, resetsAt: resetsAt)
     }
 
     private static func number(_ value: Any?) -> Double? {
-        if let value = value as? NSNumber { return value.doubleValue }
-        if let value = value as? String { return Double(value) }
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let string = value as? String { return Double(string) }
+        return nil
+    }
+
+    private static func parseDate(_ value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    }
+}
+
+enum ClaudeCredentialParser {
+    static func accessToken(from data: Data) -> String? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if let oauth = root["claudeAiOauth"] as? [String: Any],
+           let token = oauth["accessToken"] as? String, !token.isEmpty {
+            return token
+        }
+        if let token = root["accessToken"] as? String, !token.isEmpty { return token }
         return nil
     }
 }
 
-enum ClaudeUsageParser {
-    static let assumedContextWindow = 200_000
+struct ClaudeSessionUsage: Equatable {
+    let totalTokens: Int
+    let currentContextTokens: Int
+}
 
-    static func parse(_ text: String) -> (metrics: [UsageMetric], tokens: Int?) {
-        var latestTokens: Int?
-        var outputTotal = 0
+enum ClaudeUsageParser {
+    static func parse(_ text: String) -> ClaudeSessionUsage {
+        struct Record {
+            let input: Int
+            let cacheRead: Int
+            let cacheCreated: Int
+            let output: Int
+
+            var total: Int { input + cacheRead + cacheCreated + output }
+        }
+
+        var records: [String: Record] = [:]
+        var anonymousIndex = 0
+        var latest = Record(input: 0, cacheRead: 0, cacheCreated: 0, output: 0)
 
         for line in text.split(separator: "\n") {
             guard let root = JSONHelpers.dictionary(from: line),
                   let message = root["message"] as? [String: Any],
                   let usage = message["usage"] as? [String: Any] else { continue }
-            let input = integer(usage["input_tokens"])
-            let cacheRead = integer(usage["cache_read_input_tokens"])
-            let cacheCreated = integer(usage["cache_creation_input_tokens"])
-            let output = integer(usage["output_tokens"])
-            latestTokens = input + cacheRead + cacheCreated + output
-            outputTotal += output
+
+            let record = Record(
+                input: integer(usage["input_tokens"]),
+                cacheRead: integer(usage["cache_read_input_tokens"]),
+                cacheCreated: integer(usage["cache_creation_input_tokens"]),
+                output: integer(usage["output_tokens"])
+            )
+            latest = record
+            let messageID = message["id"] as? String ?? "anonymous-\(anonymousIndex)"
+            if message["id"] == nil { anonymousIndex += 1 }
+            records[messageID] = record
         }
 
-        guard let latestTokens else { return ([], nil) }
-        let fraction = Double(latestTokens) / Double(assumedContextWindow)
-        var metrics = [UsageMetric(
-            id: "claude-context",
-            title: "Current context",
-            fractionUsed: fraction,
-            valueText: "\(Formatters.compactTokens(latestTokens)) / 200K"
-        )]
-        metrics.append(UsageMetric(
-            id: "claude-output",
-            title: "Session output",
-            fractionUsed: nil,
-            valueText: "\(Formatters.compactTokens(outputTotal)) tokens"
-        ))
-        return (metrics, latestTokens)
+        return ClaudeSessionUsage(
+            totalTokens: records.values.reduce(0) { $0 + $1.total },
+            currentContextTokens: latest.total
+        )
     }
 
     private static func integer(_ value: Any?) -> Int {

@@ -13,7 +13,7 @@ struct SettingsView: View {
             placement
                 .tabItem { Label("Placement", systemImage: "rectangle.on.rectangle") }
             harnesses
-                .tabItem { Label("Harnesses", systemImage: "gauge.with.dots.needle.50percent") }
+                .tabItem { Label("Claude", systemImage: "gauge.with.dots.needle.50percent") }
             general
                 .tabItem { Label("General", systemImage: "gearshape") }
         }
@@ -58,8 +58,8 @@ struct SettingsView: View {
     private var harnesses: some View {
         VStack(alignment: .leading, spacing: 18) {
             SettingsHeader(
-                title: "AI harnesses",
-                subtitle: "Usage Harness reads local session telemetry and never uploads it."
+                title: "Claude usage",
+                subtitle: "Account windows come from Anthropic; session tokens stay local."
             )
 
             ScrollView {
@@ -88,7 +88,6 @@ struct SettingsView: View {
             .padding(.horizontal, 12)
             .background(Color(nsColor: .controlBackgroundColor).opacity(0.65), in: RoundedRectangle(cornerRadius: 12))
 
-            Toggle("Show harnesses that are not installed", isOn: showUnavailableBinding)
             HStack {
                 Button("Scan now") { Task { await store.refresh() } }
                     .disabled(store.isRefreshing)
@@ -132,7 +131,7 @@ struct SettingsView: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Privacy").font(.headline)
-                Text("Only local configuration and recent JSONL session records are read. Credentials are never read, displayed, or transmitted.")
+                Text("The app reads Claude Code’s OAuth access token from its credentials file or macOS Keychain and sends it only to Anthropic’s usage endpoint. Session transcripts are processed locally and never uploaded.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -149,10 +148,6 @@ struct SettingsView: View {
 
     private var panelVisibleBinding: Binding<Bool> {
         Binding(get: { preferences.value.panelVisible }, set: { preferences.value.panelVisible = $0 })
-    }
-
-    private var showUnavailableBinding: Binding<Bool> {
-        Binding(get: { preferences.value.showUnavailableHarnesses }, set: { preferences.value.showUnavailableHarnesses = $0 })
     }
 
     private var refreshBinding: Binding<TimeInterval> {
