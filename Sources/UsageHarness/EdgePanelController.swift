@@ -67,9 +67,9 @@ final class EdgePanelController {
         let itemCount = store.shelfItemCount
         let size: CGSize
         if edge.isVertical {
-            size = CGSize(width: 106, height: min(screen.visibleFrame.height, CGFloat(itemCount * 86 + 40)))
+            size = CGSize(width: 80, height: min(screen.visibleFrame.height, CGFloat(itemCount * 70 + 58)))
         } else {
-            size = CGSize(width: min(screen.visibleFrame.width, CGFloat(itemCount * 74 + 50)), height: 116)
+            size = CGSize(width: min(screen.visibleFrame.width, CGFloat(itemCount * 60 + 56)), height: 88)
         }
 
         let frame = screen.visibleFrame

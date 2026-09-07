@@ -14,17 +14,18 @@ struct EdgePanelView: View {
                 HStack(spacing: 4) { panelContent }
             }
         }
-        .padding(12)
+        .padding(panelInsets)
         .background {
             EdgeShelfShape(edge: edge)
-                .fill(.black.opacity(0.94))
+                .fill(.black.opacity(0.89))
                 .overlay {
                     EdgeShelfShape(edge: edge)
-                        .stroke(.white.opacity(0.12), lineWidth: 0.75)
+                        .stroke(.white.opacity(0.10), lineWidth: 0.5)
                 }
-                .shadow(color: .black.opacity(0.30), radius: 18, x: 0, y: 8)
+                .shadow(color: .black.opacity(0.22), radius: 22, x: 0, y: 7)
         }
         .padding(edgePadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: edgeAlignment)
         .animation(.easeInOut(duration: 0.25), value: store.visibleUsages)
     }
 
@@ -49,6 +50,22 @@ struct EdgePanelView: View {
         case .right: EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 0)
         case .top: EdgeInsets(top: 0, leading: 8, bottom: 10, trailing: 8)
         case .bottom: EdgeInsets(top: 10, leading: 8, bottom: 0, trailing: 8)
+        }
+    }
+
+    private var panelInsets: EdgeInsets {
+        if edge.isVertical {
+            return EdgeInsets(top: 22, leading: 6, bottom: 22, trailing: 6)
+        }
+        return EdgeInsets(top: 6, leading: 22, bottom: 6, trailing: 22)
+    }
+
+    private var edgeAlignment: Alignment {
+        switch edge {
+        case .left: .leading
+        case .right: .trailing
+        case .top: .top
+        case .bottom: .bottom
         }
     }
 }
@@ -85,14 +102,14 @@ private struct UsageMetricBadge: View {
             showsDetails.toggle()
         } label: {
             VStack(spacing: 5) {
-                MetricRing(usage: usage, metric: metric, diameter: 54)
+                MetricRing(usage: usage, metric: metric, diameter: 44)
                 Text(metric.compactValueText)
-                    .font(.system(size: 15, weight: .medium, design: .rounded))
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.92))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
-            .frame(width: 70, height: 82)
+            .frame(width: 56, height: 66)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -241,37 +258,61 @@ private struct EdgeShelfShape: Shape {
     let edge: ScreenEdge
 
     func path(in rect: CGRect) -> Path {
-        let radius = min(30, min(rect.width, rect.height) / 3)
+        let shoulder = min(30, (edge.isVertical ? rect.height : rect.width) * 0.18)
         var path = Path()
         switch edge {
         case .right:
             path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.minY))
-            path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY + radius), control: CGPoint(x: rect.minX, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - radius))
-            path.addQuadCurve(to: CGPoint(x: rect.minX + radius, y: rect.maxY), control: CGPoint(x: rect.minX, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            path.addCurve(
+                to: CGPoint(x: rect.minX, y: rect.minY + shoulder),
+                control1: CGPoint(x: rect.maxX - 2, y: rect.minY + shoulder * 0.18),
+                control2: CGPoint(x: rect.minX, y: rect.minY + shoulder * 0.62)
+            )
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - shoulder))
+            path.addCurve(
+                to: CGPoint(x: rect.maxX, y: rect.maxY),
+                control1: CGPoint(x: rect.minX, y: rect.maxY - shoulder * 0.62),
+                control2: CGPoint(x: rect.maxX - 2, y: rect.maxY - shoulder * 0.18)
+            )
         case .left:
             path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
-            path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY + radius), control: CGPoint(x: rect.maxX, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
-            path.addQuadCurve(to: CGPoint(x: rect.maxX - radius, y: rect.maxY), control: CGPoint(x: rect.maxX, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.addCurve(
+                to: CGPoint(x: rect.maxX, y: rect.minY + shoulder),
+                control1: CGPoint(x: rect.minX + 2, y: rect.minY + shoulder * 0.18),
+                control2: CGPoint(x: rect.maxX, y: rect.minY + shoulder * 0.62)
+            )
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - shoulder))
+            path.addCurve(
+                to: CGPoint(x: rect.minX, y: rect.maxY),
+                control1: CGPoint(x: rect.maxX, y: rect.maxY - shoulder * 0.62),
+                control2: CGPoint(x: rect.minX + 2, y: rect.maxY - shoulder * 0.18)
+            )
         case .top:
             path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - radius))
-            path.addQuadCurve(to: CGPoint(x: rect.minX + radius, y: rect.maxY), control: CGPoint(x: rect.minX, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.maxY))
-            path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.maxY - radius), control: CGPoint(x: rect.maxX, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+            path.addCurve(
+                to: CGPoint(x: rect.minX + shoulder, y: rect.maxY),
+                control1: CGPoint(x: rect.minX + shoulder * 0.18, y: rect.minY + 2),
+                control2: CGPoint(x: rect.minX + shoulder * 0.62, y: rect.maxY)
+            )
+            path.addLine(to: CGPoint(x: rect.maxX - shoulder, y: rect.maxY))
+            path.addCurve(
+                to: CGPoint(x: rect.maxX, y: rect.minY),
+                control1: CGPoint(x: rect.maxX - shoulder * 0.62, y: rect.maxY),
+                control2: CGPoint(x: rect.maxX - shoulder * 0.18, y: rect.minY + 2)
+            )
         case .bottom:
             path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
-            path.addQuadCurve(to: CGPoint(x: rect.minX + radius, y: rect.minY), control: CGPoint(x: rect.minX, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
-            path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY + radius), control: CGPoint(x: rect.maxX, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            path.addCurve(
+                to: CGPoint(x: rect.minX + shoulder, y: rect.minY),
+                control1: CGPoint(x: rect.minX + shoulder * 0.18, y: rect.maxY - 2),
+                control2: CGPoint(x: rect.minX + shoulder * 0.62, y: rect.minY)
+            )
+            path.addLine(to: CGPoint(x: rect.maxX - shoulder, y: rect.minY))
+            path.addCurve(
+                to: CGPoint(x: rect.maxX, y: rect.maxY),
+                control1: CGPoint(x: rect.maxX - shoulder * 0.62, y: rect.minY),
+                control2: CGPoint(x: rect.maxX - shoulder * 0.18, y: rect.maxY - 2)
+            )
         }
         path.closeSubpath()
         return path
