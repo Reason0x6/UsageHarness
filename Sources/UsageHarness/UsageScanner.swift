@@ -53,7 +53,13 @@ actor UsageScanner {
 
     private func quotaMetric(id: String, title: String, window: ClaudeQuotaWindow?) -> UsageMetric {
         guard let window else {
-            return UsageMetric(id: id, title: title, fractionUsed: nil, valueText: "Unavailable")
+            return UsageMetric(
+                id: id,
+                title: title,
+                fractionUsed: nil,
+                valueText: "Unavailable",
+                compactValueText: "—"
+            )
         }
         let fraction = window.utilization / 100
         return UsageMetric(
@@ -71,14 +77,16 @@ actor UsageScanner {
                 id: "claude-session",
                 title: "Session usage",
                 fractionUsed: nil,
-                valueText: "No recent session"
+                valueText: "No recent session",
+                compactValueText: "—"
             )
         }
         return UsageMetric(
             id: "claude-session",
             title: "Session usage",
             fractionUsed: nil,
-            valueText: "\(Formatters.compactTokens(session.totalTokens)) total · \(Formatters.compactTokens(session.currentContextTokens)) context"
+            valueText: "\(Formatters.compactTokens(session.totalTokens)) total · \(Formatters.compactTokens(session.currentContextTokens)) context",
+            compactValueText: Formatters.compactTokens(session.totalTokens)
         )
     }
 

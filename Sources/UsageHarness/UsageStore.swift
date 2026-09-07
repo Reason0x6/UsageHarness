@@ -33,6 +33,10 @@ final class UsageStore: ObservableObject {
         usages
     }
 
+    var shelfItemCount: Int {
+        max(1, visibleUsages.reduce(0) { $0 + $1.metrics.count })
+    }
+
     func start() {
         Task { await refresh() }
     }

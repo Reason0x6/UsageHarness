@@ -64,7 +64,7 @@ final class EdgePanelController {
         guard let screen = store.selectedScreen() else { return }
 
         let edge = preferences.value.edge
-        let itemCount = max(1, store.visibleUsages.count)
+        let itemCount = store.shelfItemCount
         let size: CGSize
         if edge.isVertical {
             size = CGSize(width: 106, height: min(screen.visibleFrame.height, CGFloat(itemCount * 86 + 40)))

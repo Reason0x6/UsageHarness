@@ -7,7 +7,7 @@ A small native macOS utility that hugs one edge of one display and shows Claude 
 
 ## What it does
 
-- Lives in the menu bar and presents a compact, always-available edge shelf.
+- Lives in the menu bar and presents three separate edge-shelf meters for `5H`, `7D`, and `SESSION`.
 - Supports the left, right, top, or bottom edge of any connected display. Exactly one display/edge placement is active at a time.
 - Shows Claude's five-hour usage window, weekly usage window, and most recent Claude Code session token total.
 - Reads the account counters from Anthropic's authenticated usage endpoint—the same data presented by Claude Code's `/usage` command.

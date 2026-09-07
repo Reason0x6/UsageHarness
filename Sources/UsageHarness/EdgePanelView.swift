@@ -36,7 +36,9 @@ struct EdgePanelView: View {
             }
         } else {
             ForEach(store.visibleUsages) { usage in
-                UsageBadge(usage: usage, edge: edge)
+                ForEach(usage.metrics) { metric in
+                    UsageMetricBadge(usage: usage, metric: metric, edge: edge)
+                }
             }
         }
     }
@@ -60,19 +62,20 @@ private struct EmptyPanelView: View {
             VStack(spacing: 7) {
                 Image(systemName: isRefreshing ? "arrow.triangle.2.circlepath" : "sparkle.magnifyingglass")
                     .font(.system(size: 22, weight: .medium))
-                Text(isRefreshing ? "Scanning" : "No tools")
+                Text(isRefreshing ? "Scanning" : "No Claude")
                     .font(.caption2.weight(.medium))
             }
             .foregroundStyle(.white.opacity(0.85))
             .frame(width: 66, height: 66)
         }
         .buttonStyle(.plain)
-        .help("Scan for installed AI harnesses")
+        .help("Scan for Claude usage")
     }
 }
 
-private struct UsageBadge: View {
+private struct UsageMetricBadge: View {
     let usage: HarnessUsage
+    let metric: UsageMetric
     let edge: ScreenEdge
     @State private var showsDetails = false
     @State private var dismissTask: Task<Void, Never>?
@@ -82,9 +85,9 @@ private struct UsageBadge: View {
             showsDetails.toggle()
         } label: {
             VStack(spacing: 5) {
-                UsageRing(usage: usage, diameter: 54)
-                Text(usage.primaryValue)
-                    .font(.system(size: 16, weight: .medium, design: .rounded))
+                MetricRing(usage: usage, metric: metric, diameter: 54)
+                Text(metric.compactValueText)
+                    .font(.system(size: 15, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.92))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
@@ -93,7 +96,7 @@ private struct UsageBadge: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("\(usage.kind.displayName) usage — click for details")
+        .help("\(metric.title) — click for details")
         .onHover { hovering in
             dismissTask?.cancel()
             if hovering {
@@ -108,53 +111,58 @@ private struct UsageBadge: View {
         }
         .onDisappear { dismissTask?.cancel() }
         .popover(isPresented: $showsDetails, arrowEdge: edge.popoverEdge) {
-            UsageDetailView(usage: usage)
+            UsageMetricDetailView(usage: usage, metric: metric)
         }
     }
 }
 
-private struct UsageRing: View {
+private struct MetricRing: View {
     let usage: HarnessUsage
+    let metric: UsageMetric
     let diameter: CGFloat
 
     var body: some View {
         ZStack {
             Circle()
                 .stroke(.white.opacity(0.15), style: StrokeStyle(lineWidth: 5, lineCap: .round))
-            if let progress = usage.primaryFraction {
+            if let progress = metric.fractionUsed {
                 Circle()
                     .trim(from: 0, to: max(progress, 0.015))
-                    .stroke(usage.kind.tint, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                    .stroke(metric.shelfTint, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                    .shadow(color: usage.kind.tint.opacity(0.32), radius: 4)
+                    .shadow(color: metric.shelfTint.opacity(0.32), radius: 4)
+            } else if metric.compactValueText != "—" {
+                Circle()
+                    .stroke(metric.shelfTint, style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [2.5, 6]))
             } else {
                 Circle()
                     .trim(from: 0, to: 0.10)
-                    .stroke(usage.isInstalled ? usage.kind.tint : .gray, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                    .stroke(.gray, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
-            Text(usage.kind.shortMark)
-                .font(.system(size: usage.kind.shortMark.count > 1 ? 13 : 22, weight: .semibold, design: .rounded))
+            Text(metric.shelfLabel)
+                .font(.system(size: metric.shelfLabel.count > 2 ? 9 : 14, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
         }
         .frame(width: diameter, height: diameter)
-        .accessibilityLabel(usage.kind.displayName)
-        .accessibilityValue(usage.primaryValue)
+        .accessibilityLabel(metric.title)
+        .accessibilityValue(metric.valueText)
     }
 }
 
-private struct UsageDetailView: View {
+private struct UsageMetricDetailView: View {
     let usage: HarnessUsage
+    let metric: UsageMetric
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 9) {
                 Text(usage.kind.shortMark)
                     .font(.title3.weight(.semibold))
-                    .foregroundStyle(usage.kind.tint)
+                    .foregroundStyle(metric.shelfTint)
                     .frame(width: 24)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("\(usage.kind.displayName) Usage")
+                    Text(metric.title)
                         .font(.headline)
                     Text(usage.status)
                         .font(.caption)
@@ -163,15 +171,7 @@ private struct UsageDetailView: View {
                 Spacer()
             }
 
-            if usage.metrics.isEmpty {
-                Text(usage.isInstalled ? "Start a session, then refresh to see usage here." : "This harness was not found on your machine.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(usage.metrics) { metric in
-                    MetricRow(metric: metric, tint: usage.kind.tint)
-                }
-            }
+            MetricRow(metric: metric, tint: metric.shelfTint)
 
             HStack {
                 Image(systemName: "clock")
@@ -182,6 +182,26 @@ private struct UsageDetailView: View {
         }
         .padding(18)
         .frame(width: 340)
+    }
+}
+
+private extension UsageMetric {
+    var shelfLabel: String {
+        switch id {
+        case "claude-five-hour": "5H"
+        case "claude-weekly": "7D"
+        case "claude-session": "SESSION"
+        default: "•"
+        }
+    }
+
+    var shelfTint: Color {
+        switch id {
+        case "claude-five-hour": Color(red: 1.00, green: 0.34, blue: 0.11)
+        case "claude-weekly": Color(red: 0.10, green: 0.88, blue: 0.60)
+        case "claude-session": Color(red: 0.88, green: 0.94, blue: 0.10)
+        default: .orange
+        }
     }
 }
 

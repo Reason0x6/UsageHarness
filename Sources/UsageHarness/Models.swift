@@ -59,13 +59,22 @@ struct UsageMetric: Identifiable, Equatable {
     let title: String
     let fractionUsed: Double?
     let valueText: String
+    let compactValueText: String
     let resetText: String?
 
-    init(id: String, title: String, fractionUsed: Double?, valueText: String, resetText: String? = nil) {
+    init(
+        id: String,
+        title: String,
+        fractionUsed: Double?,
+        valueText: String,
+        compactValueText: String? = nil,
+        resetText: String? = nil
+    ) {
         self.id = id
         self.title = title
         self.fractionUsed = fractionUsed.map { min(max($0, 0), 1) }
         self.valueText = valueText
+        self.compactValueText = compactValueText ?? valueText
         self.resetText = resetText
     }
 }
