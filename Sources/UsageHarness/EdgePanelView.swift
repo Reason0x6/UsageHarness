@@ -17,7 +17,7 @@ struct EdgePanelView: View {
         .padding(panelInsets)
         .background {
             EdgeShelfShape(edge: edge)
-                .fill(.black.opacity(0.89))
+                .fill(.black.opacity(0.85))
                 .overlay {
                     EdgeShelfShape(edge: edge)
                         .stroke(.white.opacity(0.10), lineWidth: 0.5)
